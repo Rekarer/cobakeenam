@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Speech API ke Webhook Make</title>
+    <!-- Load Tailwind CSS dari CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Pengaturan font dan latar belakang global */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #eef2ff; /* Warna lavender pucat */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        /* Style untuk efek tombol hover/active */
+        button {
+            transition: all 0.15s ease-in-out;
+            transform: translateZ(0);
+        }
+    </style>
+</head>
+<body class="p-4">
+
+    <div class="w-full max-w-lg bg-white shadow-2xl rounded-3xl p-6 md:p-8 space-y-6 border border-indigo-100 transform transition-all duration-300 hover:shadow-indigo-300/50">
+        <h1 class="text-3xl font-extrabold text-indigo-800 text-center">🎤 Input Suara ke Data Sheet</h1>
+        <p class="text-center text-sm text-gray-500">Rekam ucapan, urai data (Waktu, Tanggal, Nama, Kelas), dan kirim otomatis ke Webhook Make.</p>
+
+        <!-- Status & Output Section -->
+        <div class="bg-indigo-50 border-2 border-indigo-300/50 rounded-xl p-4 space-y-3 shadow-inner">
+            <div id="status" class="text-lg font-bold text-indigo-700">Status: Belum dimulai</div>
+            <div id="message" class="text-sm font-medium min-h-[1.25rem]"></div>
+            
+            <div class="bg-white p-4 rounded-lg border border-gray-200 min-h-[6rem] whitespace-pre-wrap shadow-sm">
+                <p class="text-gray-400 text-xs mb-1 font-semibold">Hasil Transkrip (Final):</p>
+                <p id="output" class="text-gray-800 text-base font-medium">Tekan tombol 'Mulai' untuk mencoba.</p>
+            </div>
+        </div>
+
+        <!-- Control Buttons -->
+        <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
+            <button id="startBtn" class="flex-1 px-6 py-3 bg-green-600 text-white font-extrabold rounded-xl shadow-lg shadow-green-400/50 hover:bg-green-700 disabled:opacity-50 disabled:shadow-none">
+                Mulai Rekam Suara
+            </button>
+            <button id="stopBtn" disabled class="flex-1 px-6 py-3 bg-red-600 text-white font-extrabold rounded-xl shadow-lg shadow-red-400/50 hover:bg-red-700 disabled:opacity-50 disabled:shadow-none">
+                Stop
+            </button>
+        </div>
+        <button id="sendBtn" disabled class="w-full px-6 py-3 bg-blue-600 text-white font-extrabold rounded-xl shadow-xl shadow-blue-400/50 hover:bg-blue-700 disabled:opacity-50 disabled:shadow-none">
+            Kirim Data Terstruktur ke Make Webhook
+        </button>
+
+        <p class="text-xs text-gray-400 text-center">
+            Tips: Coba ucapkan "Nama: Alice, Grade: 10, Class: A" agar data terurai sempurna.
+        </p>
+
+    </div>
+
+    <script type="text/javascript">
+        // Global Constants and Setup
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+        const startBtn = document.getElementById("startBtn");
+        const stopBtn = document.getElementById("stopBtn");
+        const sendBtn = document.getElementById("sendBtn");
+        const statusEl = document.getElementById("status");
+        const outputEl = document.getElementById("output");
+        const messageEl = document.getElementById("message");
+
+        // ***************************************************************
+        // GANTI URL ini dengan URL Webhook Make (Integromat) Anda yang sebenarnya
+        const MAKE_WEBHOOK_URL = 'https://your.make.webhook.url/replace/me'; 
+        // ***************************************************************
+
+        // Telegram Constants (dari kode awal user)
+        const TELEGRAM_TOKEN = "8094088254:AAHhx11hS3pBMyWrqjxKrd3oeRbA3joeB5c";
+        const TELEGRAM_CHAT_ID = "1389280044";
+
+        let rec;
+        let lastTranscript = "";
+
+        // Fungsi untuk menampilkan pesan temporer di UI (pengganti alert())
+        function showMessage(text, isError = true) {
+            messageEl.textContent = text;
+            messageEl.classList.remove('text-red-600', 'text-green-600');
+            messageEl.classList.add(isError ? 'text-red-600' : 'text-green-600');
+            setTimeout(() => {
+                messageEl.textContent = "";
+            }, 5000);
+        }
+
+        if (!SpeechRecognition) {
+            outputEl.textContent = "Browser Anda tidak mendukung Web Speech API.";
+            showMessage("Browser Anda tidak mendukung Web Speech API.", true);
+        } else {
+            rec = new SpeechRecognition();
+            rec.lang = "id-ID";
+            rec.interimResults = false;
+            rec.continuous = true;
+
+            rec.onstart = () => {
+                statusEl.textContent = "Status: 🟢 Mendengarkan...";
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                sendBtn.disabled = true;
+                messageEl.textContent = "";
+            };
+
+            rec.onend = () => {
+                statusEl.textContent = "Status: 🟡 Idle. Perekaman selesai.";
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            };
+
+            rec.onerror = (event) => {
+                console.error("Speech Recognition Error:", event.error);
+                statusEl.textContent = "Status: 🔴 Error (" + event.error + ")";
+                showMessage("Error pengenalan suara: " + event.error, true);
+            }
+
+            rec.onresult = (event) => {
+                // Ambil hasil terakhir yang sudah final
+                const result = event.results[event.results.length - 1];
+                if (result.isFinal) {
+                    const text = result[0].transcript;
+                    lastTranscript = text.trim(); // simpan hasil terakhir
+                    outputEl.textContent = lastTranscript;
+                    sendBtn.disabled = false; // aktifkan tombol kirim
+                    statusEl.textContent = "Status: ✅ Selesai merekam. Siap dikirim.";
+                } else {
+                     // Tampilkan hasil sementara untuk feedback visual
+                    outputEl.textContent = event.results[event.results.length - 1][0].transcript + " ...";
+                }
+            };
+
+            startBtn.onclick = () => {
+                try { 
+                    rec.start(); 
+                    lastTranscript = "";
+                    outputEl.textContent = "Sedang mendengarkan...";
+                } catch (e) { 
+                    console.error("Gagal memulai perekaman:", e);
+                    showMessage("Gagal memulai perekaman. Mungkin sudah berjalan?", true);
+                }
+            };
+
+            stopBtn.onclick = () => rec.stop();
+        }
+
+        // === FUNGSI KIRIM ===
+
+        // Mengambil waktu dan tanggal saat ini
+        function getCurrentDateTime() {
+            const now = new Date();
+            const dateOptions = { year: 'numeric', month: '2-digit', day: '2-digit' };
+            const timeOptions = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+            
+            return {
+                date: now.toLocaleDateString('id-ID', dateOptions), // Contoh: 24/11/2025
+                time: now.toLocaleTimeString('id-ID', timeOptions)  // Contoh: 21:30:45
+            };
+        }
+
+        // FUNGSI UTAMA: Mengirim ke Webhook Make
+        sendBtn.onclick = () => {
+            if (!lastTranscript) return showMessage("Belum ada hasil ucapan yang final untuk dikirim!", true);
+            
+            // Nonaktifkan tombol kirim sementara proses sedang berjalan
+            sendBtn.disabled = true;
+            statusEl.textContent = "Status: 📤 Mengirim data...";
+            
+            // 1. Kirim ke Webhook Make (Fungsi utama yang diminta)
+            sendTranscriptToMakeWebhook(lastTranscript)
+                .finally(() => {
+                    sendBtn.disabled = false;
+                    if (!statusEl.textContent.includes('Error')) {
+                        statusEl.textContent = "Status: ✅ Data terkirim. Siap rekam ulang.";
+                    }
+                });
+
+            // 2. Kirim ke Telegram (Fungsi opsional dari kode lama, dijalankan secara paralel)
+            sendToTelegram(lastTranscript);
+        };
+
+        function sendToTelegram(text) {
+            const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
+
+            fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    chat_id: TELEGRAM_CHAT_ID,
+                    text: "Hasil ucapan: " + text
+                })
+            })
+            .then(res => console.log("Telegram response:", res.status))
+            .catch(err => console.error("Telegram upload failed:", err));
+        }
+
+        // --- Make Webhook sender and parsing ---
+        function parseTranscript(text) {
+            // Coba pola berlabel: "nama: Alice, grade: 10, class: A" (Kasus Paling Robust)
+            const labelled = /name[:\s]+([^,;]+)[,;\s]+grade[:\s]+([^,;]+)[,;\s]+class[:\s]+(.+)/i;
+            let m = text.match(labelled);
+            if (m) return { name: m[1].trim(), grade: m[2].trim(), class: m[3].trim() };
+
+            // Coba pola koma-terpisah: "Alice, 10, A"
+            const parts = text.split(',').map(p => p.trim()).filter(Boolean);
+            if (parts.length >= 3) return { name: parts[0], grade: parts[1], class: parts[2] };
+
+            // Fallback: anggap dua token terakhir yang dipisahkan spasi sebagai grade dan class
+            const toks = text.trim().split(/\s+/).filter(Boolean);
+            if (toks.length >= 3) {
+                const classToken = toks.pop();
+                const gradeToken = toks.pop();
+                return { name: toks.join(' '), grade: gradeToken, class: classToken };
+            }
+
+            // Jika tidak ada yang cocok, kembalikan nilai default
+            return { name: "N/A", grade: "N/A", class: "N/A" };
+        }
+
+        async function sendTranscriptToMakeWebhook(text) {
+            const parsedData = parseTranscript(text);
+            const dateTime = getCurrentDateTime();
+            
+            // Payload yang akan dikirim ke Make, mencakup semua field yang diminta
+            const payload = { 
+                time: dateTime.time, 
+                date: dateTime.date, 
+                name: parsedData.name, 
+                grade: parsedData.grade, 
+                class: parsedData.class, 
+                raw_transcript: text // Menyimpan teks mentah juga
+            };
+
+            if (MAKE_WEBHOOK_URL.includes('replace/me')) {
+                console.error('ERROR: Ganti MAKE_WEBHOOK_URL dengan URL Anda yang sebenarnya.');
+                showMessage('GAGAL KIRIM: Harap ganti placeholder MAKE_WEBHOOK_URL di kode!', true);
+                return;
+            }
+
+            try {
+                const response = await fetch(MAKE_WEBHOOK_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`Non-OK response from Make: ${response.status} - ${errorText.substring(0, 100)}...`);
+                }
+
+                console.log('Data sukses dikirim ke Webhook Make!', payload);
+                showMessage('Data sukses dikirim ke Make Webhook!', false);
+            } catch (error) {
+                console.error('Gagal mengirim data ke Make Webhook:', error);
+                showMessage(`Gagal mengirim data: ${error.message}`, true);
+            }
+        }
+    </script>
+</body>
+</html>
